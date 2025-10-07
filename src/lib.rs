@@ -137,43 +137,65 @@ pub struct PowerDown;
 /// Not initalised driver after a power cycle
 pub struct Off;
 
+pub struct NoBuffer;
+
+impl interface::LocalBuffer for NoBuffer {
+    fn allocate(&mut self, _dev_info: crate::DevInfo) {
+        // Nothing, its a no-op
+    }
+}
+
 /// IT8951 e paper driver
 /// The controller supports multiple interfaces
-pub struct IT8951<IT8951Interface, State> {
+pub struct IT8951<IT8951Interface, State, LocalBuffer> {
     interface: IT8951Interface,
     dev_info: Option<DevInfo>,
     marker: core::marker::PhantomData<State>,
+    buffer: LocalBuffer,
     config: Config,
 }
 
-impl<IT8951Interface: interface::IT8951Interface, TState> IT8951<IT8951Interface, TState> {
-    fn into_state<TNew>(self) -> IT8951<IT8951Interface, TNew> {
-        IT8951::<IT8951Interface, TNew> {
+impl<IT8951Interface: interface::IT8951Interface, TState, TLocalBuffer: interface::LocalBuffer> IT8951<IT8951Interface, TState, TLocalBuffer> {
+    fn into_state<TNew>(self) -> IT8951<IT8951Interface, TNew, TLocalBuffer> {
+        IT8951::<IT8951Interface, TNew, TLocalBuffer> {
             interface: self.interface,
             dev_info: self.dev_info,
             marker: PhantomData {},
+            buffer: self.buffer,
             config: self.config,
         }
     }
 }
 
-impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Off> {
+impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer> IT8951<IT8951Interface, Off, TLocalBuffer> {
     /// Creates a new controller driver object
     /// Call init afterwards to initalize the controller
-    pub fn new(mut interface: IT8951Interface, config: Config) -> Self {
+    pub fn new(mut interface: IT8951Interface, config: Config) -> IT8951<IT8951Interface, Off, NoBuffer> {
         interface.set_busy_timeout(config.timeout_interface);
         IT8951 {
             interface,
             dev_info: None,
             marker: PhantomData {},
+            buffer: NoBuffer {},
             config,
         }
     }
 
+    // pub fn new_with_buffer(mut interface: IT8951Interface, config: Config) -> IT8951<IT8951Interface, Off, AllocBuffer> {
+    //     interface.set_busy_timeout(config.timeout_interface);
+    //     IT8951 {
+    //         interface,
+    //         dev_info: None,
+    //         marker: PhantomData {},
+    //         buffer: NoBuffer {},
+    //         config,
+    //     }
+    // }
+
     /// Initalize the driver and resets the display
     /// VCOM should be given on your display
     /// Since version 0.4.0, this function no longer resets the display
-    pub fn init(mut self, vcom: u16) -> Result<IT8951<IT8951Interface, Run>, Error> {
+    pub fn init(mut self, vcom: u16, buffer: TLocalBuffer) -> Result<IT8951<IT8951Interface, Run, TLocalBuffer>, Error> {
         self.interface.reset()?;
 
         let mut it8951 = self.into_state::<PowerDown>().sys_run()?;
@@ -197,13 +219,14 @@ impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Off> {
     pub fn attach(
         mut interface: IT8951Interface,
         config: Config,
-    ) -> Result<IT8951<IT8951Interface, Run>, Error> {
+    ) -> Result<IT8951<IT8951Interface, Run, NoBuffer>, Error> {
         interface.set_busy_timeout(config.timeout_interface);
 
         let mut it8951 = IT8951 {
             interface,
             dev_info: None,
             marker: PhantomData {},
+            buffer: NoBuffer {},
             config,
         }
         .sys_run()?;
@@ -214,7 +237,7 @@ impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Off> {
     }
 }
 
-impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Run> {
+impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::LocalBuffer> IT8951<IT8951Interface, Run, TLocalBuffer> {
     /// Get the Device information
     pub fn get_dev_info(&self) -> DevInfo {
         self.dev_info.clone().unwrap()
@@ -525,10 +548,10 @@ impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Run> {
     }
 }
 
-impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, PowerDown> {
+impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::TLocalBuffer> IT8951<IT8951Interface, PowerDown, TLocalBuffer> {
     /// Activate active power mode
     /// This is the normal operation power mode
-    pub fn sys_run(mut self) -> Result<IT8951<IT8951Interface, Run>, Error> {
+    pub fn sys_run(mut self) -> Result<IT8951<IT8951Interface, Run, TLocalBuffer>, Error> {
         self.interface.write_command(command::IT8951_TCON_SYS_RUN)?;
         Ok(self.into_state())
     }
@@ -538,7 +561,7 @@ impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, PowerD
 
 use embedded_graphics_core::{pixelcolor::Gray4, prelude::*, primitives::Rectangle};
 
-impl<IT8951Interface: interface::IT8951Interface> DrawTarget for IT8951<IT8951Interface, Run> {
+impl<IT8951Interface: interface::IT8951Interface> DrawTarget for IT8951<IT8951Interface, Run, NoBuffer> {
     type Color = Gray4;
 
     type Error = Error;
@@ -663,8 +686,8 @@ impl<IT8951Interface: interface::IT8951Interface> DrawTarget for IT8951<IT8951In
     }
 }
 
-impl<IT8951Interface: interface::IT8951Interface> OriginDimensions
-    for IT8951<IT8951Interface, Run>
+impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::LocalBuffer> OriginDimensions
+    for IT8951<IT8951Interface, Run, TLocalBuffer>
 {
     fn size(&self) -> Size {
         let dev_info = self.dev_info.as_ref().unwrap();
