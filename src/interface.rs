@@ -62,7 +62,7 @@ pub trait IT8951Interface {
 }
 
 pub trait LocalBuffer {
-    fn allocate(&mut self, dev_info: crate::DevInfo);
+    fn allocate(&mut self, dev_info: &crate::DevInfo);
 }
 
 /// Implements the controller interface for the spi hardware interface

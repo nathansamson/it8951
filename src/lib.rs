@@ -139,23 +139,41 @@ pub struct Off;
 pub struct NoBuffer;
 
 impl interface::LocalBuffer for NoBuffer {
-    fn allocate(&mut self, _dev_info: crate::DevInfo) {
+    fn allocate(&mut self, _dev_info: &crate::DevInfo) {
         // Nothing, its a no-op
     }
 }
 
+pub struct AllocBuffer {
+    buffer: alloc::vec::Vec<u8>
+}
+
+impl AllocBuffer {
+    fn as_buffer(&self) -> &[u8] {
+        &self.buffer
+    }
+}
+
+impl interface::LocalBuffer for AllocBuffer {
+    fn allocate(&mut self, dev_info: &crate::DevInfo) {
+        let bytes = dev_info.panel_height * dev_info.panel_width / 2;
+        self.buffer = vec![0; bytes as usize];
+    }
+}
+
+
 /// IT8951 e paper driver
 /// The controller supports multiple interfaces
-pub struct IT8951<IT8951Interface, State, LocalBuffer> {
+pub struct IT8951<'a, IT8951Interface, State, LocalBuffer> {
     interface: IT8951Interface,
     dev_info: Option<DevInfo>,
     marker: core::marker::PhantomData<State>,
-    buffer: LocalBuffer,
+    buffer: &'a LocalBuffer,
     config: Config,
 }
 
-impl<IT8951Interface: interface::IT8951Interface, TState, TLocalBuffer: interface::LocalBuffer> IT8951<IT8951Interface, TState, TLocalBuffer> {
-    fn into_state<TNew>(self) -> IT8951<IT8951Interface, TNew, TLocalBuffer> {
+impl<'a, IT8951Interface: interface::IT8951Interface, TState, TLocalBuffer: interface::LocalBuffer> IT8951<'a, IT8951Interface, TState, TLocalBuffer> {
+    fn into_state<TNew>(self) -> IT8951<'a, IT8951Interface, TNew, TLocalBuffer> {
         IT8951::<IT8951Interface, TNew, TLocalBuffer> {
             interface: self.interface,
             dev_info: self.dev_info,
@@ -166,7 +184,7 @@ impl<IT8951Interface: interface::IT8951Interface, TState, TLocalBuffer: interfac
     }
 }
 
-impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer> IT8951<IT8951Interface, Off, TLocalBuffer> {
+impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::LocalBuffer> IT8951<IT8951Interface, Off, TLocalBuffer> {
     /// Creates a new controller driver object
     /// Call init afterwards to initalize the controller
     pub fn new(mut interface: IT8951Interface, config: Config) -> IT8951<IT8951Interface, Off, NoBuffer> {
@@ -175,7 +193,7 @@ impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer> IT8951<IT8951Int
             interface,
             dev_info: None,
             marker: PhantomData {},
-            buffer: NoBuffer {},
+            buffer: &NoBuffer {},
             config,
         }
     }
@@ -200,6 +218,9 @@ impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer> IT8951<IT8951Int
         let mut it8951 = self.into_state::<PowerDown>().sys_run()?;
 
         let dev_info = it8951.get_system_info()?;
+
+        it8951.buffer = buffer;
+        it8951.buffer.allocate(&dev_info);
 
         // Enable Pack Write
         it8951.write_register(register::I80CPCR, 0x0001)?;
@@ -315,7 +336,7 @@ impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::Local
         Ok(())
     }
 
-    fn set_target_memory_addr(&mut self, target_mem_addr: u32) -> Result<(), Error> {
+    fn set_target_memory_addr(&self, target_mem_addr: u32) -> Result<(), Error> {
         self.write_register(register::LISAR + 2, (target_mem_addr >> 16) as u16)?;
         self.write_register(register::LISAR, target_mem_addr as u16)?;
         Ok(())
@@ -518,7 +539,7 @@ impl<IT8951Interface: interface::IT8951Interface, TLocalBuffer: interface::Local
         Ok(data)
     }
 
-    fn write_register(&mut self, reg: u16, data: u16) -> Result<(), Error> {
+    fn write_register(&self, reg: u16, data: u16) -> Result<(), Error> {
         self.interface.write_command(command::IT8951_TCON_REG_WR)?;
         self.interface.write_data(reg)?;
         self.interface.write_data(data)?;
