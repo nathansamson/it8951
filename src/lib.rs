@@ -50,6 +50,7 @@ pub struct Config {
     pub max_buffer_size: usize,
     /// Display rotation
     pub rotation: Rotation,
+    pub origin: Origin,
 }
 
 impl Default for Config {
@@ -59,6 +60,16 @@ impl Default for Config {
             timeout_interface: core::time::Duration::from_secs(15),
             max_buffer_size: 1024,
             rotation: Rotation::Rotate0,
+            origin: Origin::TopLeft
+        }
+    }
+}
+
+impl Config {
+    fn transform_area_info_x(&self, x: u16, dev_info: &DevInfo) -> u16 {
+        match self.origin {
+            Origin::TopLeft => x,
+            Origin::TopRight => dev_info.panel_width - x
         }
     }
 }
@@ -126,6 +137,15 @@ pub enum Rotation {
     Rotate180,
     /// Rotate 270 degree
     Rotate270,
+}
+
+/// Sets origin of the controller
+/// This will transform any image area operations before send to the controller
+pub enum Origin {
+    /// Origin is in TopLeft corner (Default)
+    TopLeft,
+    /// Origin is in the TopRight corner
+    TopRight,
 }
 
 /// Normal Operation
@@ -277,7 +297,7 @@ impl<IT8951Interface: interface::IT8951Interface> IT8951<IT8951Interface, Run> {
             command::IT8951_TCON_LD_IMG_AREA,
             &[
                 image_settings.borrow().into_arg(),
-                area_info.area_x,
+                self.config.transform_area_info_x(area_info.area_x, self.dev_info.as_ref().unwrap()),
                 area_info.area_y,
                 area_info.area_w,
                 area_info.area_h,
